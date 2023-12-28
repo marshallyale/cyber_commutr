@@ -4,10 +4,11 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 
 
 class Config:
-    SECRET_KEY = os.getenv("key")
-    RABBIT_USER = os.getenv("rabbit_user")
-    RABBIT_PW = os.getenv("rabbit_pw")
-    SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DATABASE_URL"
-    ) or "sqlite:///" + os.path.join(basedir, "app.db")
-    MONGO_URI = os.getenv("mongo_uri")
+    SECRET_KEY = os.getenv("KEY")
+    RABBIT_USER = os.getenv("RABBIT_USER")
+    RABBIT_PW = os.getenv("RABBIT_PW")
+    MONGO_URI = os.getenv("MONGO_URI")
+    STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
+    STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
+    REQUIRED_SCOPE = os.getenv("STRAVA_SCOPE") or "read,activity:read_all"
+    FLASK_DOMAIN = os.getenv("FLASK_DOMAIN")
