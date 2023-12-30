@@ -10,5 +10,5 @@ class Config:
     MONGO_URI = os.getenv("MONGO_URI")
     STRAVA_CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
     STRAVA_CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
-    REQUIRED_SCOPE = os.getenv("STRAVA_SCOPE") or "read,activity:read_all"
+    REQUIRED_SCOPE = os.getenv("STRAVA_SCOPE") or "read,activity:read"
     FLASK_DOMAIN = os.getenv("FLASK_DOMAIN")
