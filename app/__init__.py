@@ -1,5 +1,4 @@
 from flask import Flask
-from app.errors import handlers
 from config import Config
 from flask_pymongo import PyMongo
 from flask_login import LoginManager
@@ -9,8 +8,6 @@ import base64
 import os
 from cryptography.fernet import Fernet
 from argon2 import PasswordHasher
-import sys
-import time
 import ngrok
 
 db_client = PyMongo()
