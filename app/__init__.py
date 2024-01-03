@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, flash
 from config import Config
 from flask_pymongo import PyMongo
 from flask_login import LoginManager
@@ -13,7 +13,8 @@ import ngrok
 db_client = PyMongo()
 login = LoginManager()
 login.login_view = "auth.login"
-login.login_message = "Please log in to access this page."
+login.login_message = "Please login to view this page"
+login.login_message_category = "warning"
 
 
 def create_app(config_class=Config):

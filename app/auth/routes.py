@@ -50,7 +50,6 @@ def strava_token():
 @bp.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
-        print("User already authenticated")
         return redirect(url_for("main.index"))
     form = LoginForm()
     if form.validate_on_submit():
@@ -62,12 +61,10 @@ def login():
         else:
             user = None
         if user is None or not user.check_password(form.password.data):
-            flash("Invalid username or password")
-            print("Invalid username or password")
+            flash("Invalid username or password", "warning")
             return redirect(url_for("auth.login"))
         login_user(user, remember=form.remember_me.data)
         if user.check_user_is_authenticated_with_strava() is False:
-            print("Redirecting to Strava")
             return redirect(url_for("auth.strava_authorize"))
         next_page = request.args.get("next")
         if not next_page or urlsplit(next_page).netloc != "":
@@ -85,7 +82,7 @@ def register():
         user = User(username=form.username.data, email=form.email.data)
         user.set_password(form.password.data)
         db_client.db.users.insert_one(user.__dict__)
-        flash("Congratulations, you are now a registered user!")
+        flash("Congratulations, you are now a registered user!", "success")
         return redirect(url_for("auth.login"))
     return render_template("auth/register.html", title="Register", form=form)
 
@@ -93,4 +90,4 @@ def register():
 @bp.route("/logout")
 def logout():
     logout_user()
-    return redirect(url_for("main.index"))
+    return redirect(url_for("auth.login"))
