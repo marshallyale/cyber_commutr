@@ -26,24 +26,3 @@ def webhook():
             # Responds with '403 Forbidden' if verify tokens do not match
             print("Tokens do not match")
             return "Forbidden", 403
-
-
-@bp.route("/subscription", methods=["GET"])
-@login_required
-def create_subscription():
-    if not current_user.is_admin:
-        abort(403)
-    subscription = Subscription()
-    subscriptions = subscription.get_subscriptions()
-    if subscriptions:
-        subscription_url = subscriptions[0].get("callback_url")
-        subscription_url.replace("/webhook", "")
-    else:
-        subscription_url = None
-    if current_app.host_url != subscription_url or subscription_url is None:
-        if subscription_url != None:
-            subscription.delete_subscription()
-        response = subscription.create_subscription().json()
-        if response.get("id"):
-            return "Created subscription successfully", 200
-        return "Couldn't create subscription", 200

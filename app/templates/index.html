@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block content %}
-<h1>Hi, {{ current_user.username }}!</h1>
+<h2>Welcome to Commutr! Your hub for everything commuting. Let's save the world, one less car at a time!</h2>
 {% for post in posts %}
 <div>
     <p>{{ post.author.username }} says: <b>{{ post.body }}</b></p>

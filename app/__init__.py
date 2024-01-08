@@ -2,6 +2,8 @@ from flask import Flask, flash
 from config import Config
 from flask_pymongo import PyMongo
 from flask_login import LoginManager
+
+# from flask_admin import Admin, UserView
 from logging.handlers import RotatingFileHandler
 import logging
 import base64
@@ -12,6 +14,7 @@ import ngrok
 
 db_client = PyMongo()
 login = LoginManager()
+# admin = Admin(name="Commutr", template_mode="bootstrap-3")
 login.login_view = "auth.login"
 login.login_message = "Please login to view this page"
 login.login_message_category = "warning"
@@ -65,9 +68,7 @@ def create_app(config_class=Config):
             "Have you updated the authorization callback domain at https://www.strava.com/settings/api (Y/N) "
         )
         if updated.lower() != "y":
-            print(
-                "You have to update the authorization domain for this to work"
-            )
+            print("You have to update the authorization domain for this to work")
             return (
                 "You have to update the authorization domain for this to work",
                 400,

@@ -22,7 +22,7 @@ class User(UserMixin):
     password: str = ""
     refresh_token: str = ""
     access_token: str = ""
-    access_token_exp: str = ""
+    access_token_exp: int = 0
     scope: bool = False
     created_at: datetime = datetime.utcnow()
     updated_at: datetime = datetime.utcnow()
@@ -55,9 +55,7 @@ class User(UserMixin):
 
     def update_user_in_mongo(self, update_data):
         result = db_client.db.users.update_one(
-            {
-                "username": self.username
-            },  # Use the user's _id for identification
+            {"username": self.username},  # Use the user's _id for identification
             {"$set": update_data},
         )
 
@@ -74,6 +72,10 @@ class User(UserMixin):
 
     def get_id(self):
         return self.username
+
+    def update(self, updates):
+        for key, value in updates.items():
+            setattr(self, key, value)
 
     def string_crypto(self, data, encrypt=False, decrypt=False):
         if encrypt and decrypt:
@@ -94,23 +96,24 @@ class User(UserMixin):
             },
             timeout=10,
         )
-        user_info = strava_request.json()
-        athlete_info = user_info.get("athlete")
-        athlete_id = athlete_info.get("id")
-        user_info["strava_id"] = athlete_id
-        user_info["access_token_exp"] = user_info.pop("expires_at")
-        user_info["refresh_token"] = self.string_crypto(
-            user_info.get("refresh_token"), encrypt=True
-        )
-        # Set scope equal to true, since they gave correct scope
-        user_info["scope"] = True
-        # Don't need the following fields
-        del user_info["athlete"]
-        del user_info["token_type"]
-        del user_info["expires_in"]
-        self.update_user_in_mongo(user_info)
+        response = strava_request.json()
+        athlete_info = response.get("athlete")
+        self.strava_id = athlete_info.get("id")
+        user_data = {
+            "access_token": response.get("access_token"),
+            "access_token_exp": response.get("expires_at"),
+            "strava_id": self.strava_id,
+            "refresh_token": self.string_crypto(
+                response.get("refresh_token"),
+                encrypt=True,
+            ),
+            "scope": True,
+        }
+        # Set the objects values to the user_data dict
+        self.update(user_data)
+        self.update_user_in_mongo(user_data)
         db_client.db.strava_athletes.update_one(
-            {"id": athlete_id}, {"$set": athlete_info}, upsert=True
+            {"id": self.strava_id}, {"$set": athlete_info}, upsert=True
         )
 
     def refresh_access_token(self):
@@ -119,20 +122,20 @@ class User(UserMixin):
             data={
                 "client_id": current_app.config["STRAVA_CLIENT_ID"],
                 "client_secret": current_app.config["STRAVA_CLIENT_SECRET"],
-                "refresh_token": self.string_crypto(
-                    self.refresh_token, decrypt=True
-                ),
+                "refresh_token": self.string_crypto(self.refresh_token, decrypt=True),
                 "grant_type": "refresh_token",
             },
             timeout=10,
         )
-        access_data = strava_request.json()
-        access_data["access_token_exp"] = access_data.pop("expires_at")
-        access_data["refresh_token"] = self.string_crypto(
-            access_data.get("refresh_token"), encrypt=True
-        )
-        del access_data["token_type"]
-        del access_data["expires_in"]
+        response = strava_request.json()
+        access_data = {
+            "access_token": response.get("access_token"),
+            "access_token_exp": response.get("expires_at"),
+            "refresh_token": self.string_crypto(
+                response.get("refresh_token"), encrypt=True
+            ),
+        }
+        self.update(access_data)
         success = self.update_user_in_mongo(access_data)
         if success:
             return True
@@ -188,27 +191,28 @@ class Subscription:
         headers=None,
         create=False,
     ):
-        response = requests.request(
-            method,
-            url,
-            headers=headers,
-            params=params,
-            data=payload,
-            timeout=10,
-        )
-        if create:
+        try:
+            response = requests.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                data=payload,
+                timeout=10,
+            )
+            if create:
+                return response
+            response.raise_for_status()
             return response
-        response.raise_for_status()
-        return response
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to send request. {e}")
 
     def get_subscriptions(self):
         params = {
             "client_id": current_app.config.get("STRAVA_CLIENT_ID"),
             "client_secret": current_app.config.get("STRAVA_CLIENT_SECRET"),
         }
-        return self.send_request(
-            self.strava_url, method="GET", params=params
-        ).json()
+        return self.send_request(self.strava_url, method="GET", params=params).json()
 
     def create_subscription(self):
         current_app.verify_token = self._generate_random_string()
@@ -240,9 +244,7 @@ class Subscription:
 
     def _generate_random_string(self, length=10):
         characters = string.ascii_letters + string.digits
-        random_string = "".join(
-            secrets.choice(characters) for _ in range(length)
-        )
+        random_string = "".join(secrets.choice(characters) for _ in range(length))
 
         return random_string
 
@@ -256,27 +258,24 @@ class Event:
     owner_id: int  # Athlete id
     subscription_id: int  # Subscription id
     event_time: int  # Time event occured
-
-    def get_collection_for_event(self):
-        if self.object_type == "athlete":
-            return db_client.db.get_collection("strava_athletes")
-        return db_client.db.get_collection("activities")
+    collection: str = "activities"
 
     def create_update_or_delete_event(self):
-        collection = self.get_collection_for_event()
+        if self.object_type == "athlete":
+            self.collection = "strava_athletes"
         if self.aspect_type == "create":
             # This should always be an activity
             object_info = self.fetch_object()
-            collection.insert_one(object_info)
+            self.upsert_to_mongo("id", object_info)
             return
         if self.aspect_type == "update":
-            self.update_activity_or_athelete(collection)
+            self.update_activity_or_athelete()
             return
         if self.aspect_type == "delete":
-            self.delete_activity_or_athlete(collection)
+            self.delete_activity_or_athlete()
             return
 
-    def update_activity_or_athelete(self, collection):
+    def update_activity_or_athelete(self):
         if self.object_type == "athlete":
             if self.updates.get("authorized") == "false":
                 db_client.db.users.update_one(
@@ -286,21 +285,26 @@ class Event:
             id_key = "strava_id"
         else:
             id_key = "id"
+        object_info = self.fetch_object()
+        self.upsert_to_mongo(id_key, object_info)
+
+    def upsert_to_mongo(self, object_id, data):
+        collection = db_client.db.get_collection(self.collection)
         result = collection.update_one(
-            {id_key: self.object_id}, {"$set": self.updates}
+            {object_id: self.object_id}, {"$set": data}, upsert=True
         )
         if result.matched_count == 1:
             return True
         return False
 
-    def delete_activity_or_athlete(self, collection):
+    def delete_activity_or_athlete(self):
+        collection = db_client.db.get_collection(self.collection)
         if self.object_type == "athlete":
             # Doubt this ever gets called
-            id_key = "id"
+            id_key = "owner_id"
         else:
-            id_key = "athlete.id"
-        result = collection.delete_one({id_key: self.owner_id})
-
+            id_key = "id"
+        result = collection.delete_one({id_key: self.object_id})
         if result.deleted_count == 1:
             return True
         return False
@@ -312,27 +316,23 @@ class Event:
         if self.object_type == "activity":
             url = f"https://www.strava.com/api/v3/activities/{self.object_id}"
             params = {"include_all_efforts": False}
-            data = self.send_request(
-                url, method="GET", params=params, headers=headers
-            )
-            return data
+            data = self.send_request(url, method="GET", params=params, headers=headers)
+            if data:
+                return data
         return None
 
-    def send_request(
-        self,
-        url,
-        method="GET",
-        payload=None,
-        params=None,
-        headers=None,
-    ):
-        response = requests.request(
-            method,
-            url,
-            headers=headers,
-            params=params,
-            data=payload,
-            timeout=10,
-        )
-        response.raise_for_status()
-        return response.json()
+    def send_request(self, url, method="GET", payload=None, params=None, headers=None):
+        try:
+            response = requests.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                data=payload,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to retrieve object id. {e}")
+            return None
