@@ -2,8 +2,6 @@ from flask import Flask, flash
 from config import Config
 from flask_pymongo import PyMongo
 from flask_login import LoginManager
-
-# from flask_admin import Admin, UserView
 from logging.handlers import RotatingFileHandler
 import logging
 import base64
@@ -22,8 +20,9 @@ login.login_message_category = "warning"
 
 def create_app(config_class=Config):
     app = Flask(__name__)
-    app.config.from_object(Config)
+    app.config.from_object(config_class)
     db_client.init_app(app)
+    print(db_client.db)
     login.init_app(app)
     from app.errors import bp as errors_bp
 
