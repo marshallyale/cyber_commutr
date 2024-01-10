@@ -54,6 +54,8 @@ class User(UserMixin):
         return True
 
     def update_user_in_mongo(self, update_data):
+        # First update the user in our model
+        self.update(update_data)
         result = db_client.db.users.update_one(
             {"username": self.username},  # Use the user's _id for identification
             {"$set": update_data},
@@ -86,17 +88,17 @@ class User(UserMixin):
             return current_app.ENCRYPTOR.decrypt(data).decode("utf-8")
 
     def exchange_auth_token_for_refresh_token(self, code):
-        strava_request = requests.post(
-            "https://www.strava.com/oauth/token",
-            data={
-                "client_id": current_app.config["STRAVA_CLIENT_ID"],
-                "client_secret": current_app.config["STRAVA_CLIENT_SECRET"],
-                "code": code,
-                "grant_type": "authorization_code",
-            },
-            timeout=10,
-        )
-        response = strava_request.json()
+        url = "https://www.strava.com/oauth/token"
+        data = {
+            "client_id": current_app.config["STRAVA_CLIENT_ID"],
+            "client_secret": current_app.config["STRAVA_CLIENT_SECRET"],
+            "code": code,
+            "grant_type": "authorization_code",
+        }
+        response = self._request(url, method="POST", payload=data)
+        # If lookup fails, return None
+        if not response:
+            return None
         athlete_info = response.get("athlete")
         self.strava_id = athlete_info.get("id")
         user_data = {
@@ -109,25 +111,24 @@ class User(UserMixin):
             ),
             "scope": True,
         }
-        # Set the objects values to the user_data dict
-        self.update(user_data)
         self.update_user_in_mongo(user_data)
         db_client.db.strava_athletes.update_one(
             {"id": self.strava_id}, {"$set": athlete_info}, upsert=True
         )
+        # TODO: Handle a failed code lookup in app
+        return True
 
     def refresh_access_token(self):
-        strava_request = requests.post(
-            "https://www.strava.com/oauth/token",
-            data={
-                "client_id": current_app.config["STRAVA_CLIENT_ID"],
-                "client_secret": current_app.config["STRAVA_CLIENT_SECRET"],
-                "refresh_token": self.string_crypto(self.refresh_token, decrypt=True),
-                "grant_type": "refresh_token",
-            },
-            timeout=10,
-        )
-        response = strava_request.json()
+        url = "https://www.strava.com/oauth/token"
+        data = {
+            "client_id": current_app.config["STRAVA_CLIENT_ID"],
+            "client_secret": current_app.config["STRAVA_CLIENT_SECRET"],
+            "refresh_token": self.string_crypto(self.refresh_token, decrypt=True),
+            "grant_type": "refresh_token",
+        }
+        response = self._request(url, method="POST", payload=data)
+        if not response:
+            return False
         access_data = {
             "access_token": response.get("access_token"),
             "access_token_exp": response.get("expires_at"),
@@ -135,11 +136,10 @@ class User(UserMixin):
                 response.get("refresh_token"), encrypt=True
             ),
         }
-        self.update(access_data)
         success = self.update_user_in_mongo(access_data)
-        if success:
-            return True
-        return False
+        if not success:
+            return False
+        return True
 
     def check_access_token(self):
         current_datetime = datetime.now()
@@ -148,9 +148,9 @@ class User(UserMixin):
         if current_timestamp - 60 >= self.access_token_exp:
             success = self.refresh_access_token()
             if success:
-                print("Successfully refreshed access token")
-            else:
-                print("Failed to refresh access token")
+                return True
+            # TODO: Add error handling on the frontend if it fails
+            return False
 
     def fetch_user_strava_profile(self):
         profile = db_client.db.strava_athletes.find_one({"id": self.strava_id})
@@ -160,6 +160,22 @@ class User(UserMixin):
         profile_data = self.fetch_user_strava_profile()
         url = profile_data.get("profile")
         return url
+
+    def _request(self, url, method="GET", payload=None, params=None, headers=None):
+        try:
+            response = requests.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                data=payload,
+                timeout=10,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to retrieve access code. {e}")
+            return None
 
 
 @login.user_loader
@@ -206,13 +222,17 @@ class Subscription:
             return response
         except requests.exceptions.RequestException as e:
             print(f"Failed to send request. {e}")
+            return None
 
     def get_subscriptions(self):
         params = {
             "client_id": current_app.config.get("STRAVA_CLIENT_ID"),
             "client_secret": current_app.config.get("STRAVA_CLIENT_SECRET"),
         }
-        return self.send_request(self.strava_url, method="GET", params=params).json()
+        response = self.send_request(self.strava_url, method="GET", params=params)
+        if not response:
+            return None
+        return response.json()
 
     def create_subscription(self):
         current_app.verify_token = self._generate_random_string()
@@ -251,6 +271,13 @@ class Subscription:
 
 @dataclass
 class Event:
+    """
+    Class to handle events received from Strava. These are always update from the webhook api.
+    Create: Should always be an activity. Just fetch the activity and insert to mongo
+    Update: Only updates for change in title, type, privacy, or deauthorization
+    Delete:
+    """
+
     object_type: str  # activity or athlete
     object_id: int  # For activity, activity id. For athlete, athlete id
     aspect_type: str  # Create, update, or delete
@@ -266,16 +293,22 @@ class Event:
         if self.aspect_type == "create":
             # This should always be an activity
             object_info = self.fetch_object()
+            if not object_info:
+                return False
             self.upsert_to_mongo("id", object_info)
-            return
+            return True
         if self.aspect_type == "update":
-            self.update_activity_or_athelete()
-            return
+            update_success = self.update_activity_or_athlete()
+            if not update_success:
+                return False
+            return True
         if self.aspect_type == "delete":
-            self.delete_activity_or_athlete()
-            return
+            success = self.delete_activity_or_athlete()
+            if not success:
+                return False
+            return True
 
-    def update_activity_or_athelete(self):
+    def update_activity_or_athlete(self):
         if self.object_type == "athlete":
             if self.updates.get("authorized") == "false":
                 db_client.db.users.update_one(
@@ -286,7 +319,12 @@ class Event:
         else:
             id_key = "id"
         object_info = self.fetch_object()
-        self.upsert_to_mongo(id_key, object_info)
+        if not object_info:
+            return False
+        upsert_success = self.upsert_to_mongo(id_key, object_info)
+        if not upsert_success:
+            return False
+        return True
 
     def upsert_to_mongo(self, object_id, data):
         collection = db_client.db.get_collection(self.collection)
@@ -316,12 +354,12 @@ class Event:
         if self.object_type == "activity":
             url = f"https://www.strava.com/api/v3/activities/{self.object_id}"
             params = {"include_all_efforts": False}
-            data = self.send_request(url, method="GET", params=params, headers=headers)
+            data = self._request(url, method="GET", params=params, headers=headers)
             if data:
                 return data
         return None
 
-    def send_request(self, url, method="GET", payload=None, params=None, headers=None):
+    def _request(self, url, method="GET", payload=None, params=None, headers=None):
         try:
             response = requests.request(
                 method,
