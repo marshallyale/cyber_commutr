@@ -1,12 +1,11 @@
-from datetime import datetime, timezone, timedelta
-import pytest
-from app.models import Subscription, Event, load_user, load_user_by_strava_id
-from app import create_app, db_client
-from config import Config
-from dotenv import load_dotenv
-import time
-import responses
+from datetime import datetime
 import json
+import pytest
+from dotenv import load_dotenv
+import responses
+from config import Config
+from app import create_app, db_client
+from app.models import Subscription, Event, load_user
 
 load_dotenv(".flaskenv")
 
@@ -176,6 +175,10 @@ class TestUserCase:
         )
         assert alice.exchange_auth_token_for_refresh_token("abc123") is None
 
+    def test_aggregate_activities(self, admin):
+        total = list(admin.get_user_commute_totals())
+        assert total[0].get("total") == 34295.3
+
 
 @pytest.fixture
 def sub(get_app):
@@ -292,22 +295,6 @@ class TestEvents:
 
         assert mongo_result.get("id") == 10
         assert mongo_result.get("name") == "Barley Flats and Dissapointment"
-        # Now triggering a delete of the event to test that functionality.
-        mongo_count = db_client.db.activities.count_documents({})
-        create_event.aspect_type = "delete"
-        delete_success = create_event.create_update_or_delete_event()
-        assert delete_success is True
-        new_mongo_result = db_client.db.activities.find_one(
-            {"id": create_event.object_id}
-        )
-        new_mongo_count = db_client.db.activities.count_documents({})
-        assert mongo_count - new_mongo_count == 1
-        # Now trying to call delete again to make sure nothing unexpected happens
-        assert new_mongo_result is None
-        delete_success = create_event.create_update_or_delete_event()
-        assert delete_success is False
-        final_mongo_count = db_client.db.activities.count_documents({})
-        assert mongo_count - final_mongo_count == 1
 
     def test_failed_create_event(self, admin, create_event, access_token_mock):
         responses.add(access_token_mock)

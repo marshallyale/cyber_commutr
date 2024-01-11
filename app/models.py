@@ -1,21 +1,28 @@
 from dataclasses import dataclass, field, InitVar
 from typing import Optional
-import requests
-from app import db_client, login
-from flask import current_app
+import string
 from datetime import datetime
+import secrets
+import requests
+from flask import current_app
 from argon2.exceptions import (
     VerifyMismatchError,
     VerificationError,
     InvalidHashError,
 )
 from flask_login import UserMixin
-import secrets
-import string
+from app.db_queries.mongo_queries import weekly_aggregator
+from app import db_client, login
 
 
 @dataclass
 class User(UserMixin):
+    """Main user Class
+
+    Args:
+        UserMixin (class): Automatic methods used by flask login
+    """
+
     username: str
     email: str
     strava_id: int = 0
@@ -80,6 +87,16 @@ class User(UserMixin):
             setattr(self, key, value)
 
     def string_crypto(self, data, encrypt=False, decrypt=False):
+        """Function to encrypt and decrypt refresh tokens
+
+        Args:
+            data (str): Data to encrypt
+            encrypt (bool, optional): Set to true to encrypt. Defaults to False.
+            decrypt (bool, optional): Set to true to decrypt. Defaults to False.
+
+        Returns:
+            str: Either binary encoded data or str data
+        """
         if encrypt and decrypt:
             raise ValueError("Please specify either encrypt or decrypt")
         if encrypt:
@@ -160,6 +177,11 @@ class User(UserMixin):
         profile_data = self.fetch_user_strava_profile()
         url = profile_data.get("profile")
         return url
+
+    def get_user_commute_totals(self):
+        pipeline = weekly_aggregator(self.strava_id)
+        result = db_client.db.activities.aggregate(pipeline)
+        return result
 
     def _request(self, url, method="GET", payload=None, params=None, headers=None):
         try:
