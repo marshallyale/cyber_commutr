@@ -16,8 +16,8 @@ def index():
 @login_required
 def user(username):
     user = User(**db_client.db.users.find_one_or_404({"username": username}))
-    user_weekly_totals = None
-    return render_template("user.html", user=user)
+    user_weekly_totals = user.get_user_commute_totals()
+    return render_template("user.html", user=user, weekly_totals=user_weekly_totals)
 
 
 @bp.route("/admin", methods=["GET", "POST"])

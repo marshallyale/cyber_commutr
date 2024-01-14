@@ -7,12 +7,31 @@
         <td>
             <h1>User: {{ user.username }}</h1>
         </td>
-    </tr>
 </table>
-<hr>
-{% for post in posts %}
-<p>
-    {{ post.author.username }} says: <b>{{ post.body }}</b>
-</p>
-{% endfor %}
+
+<div>
+    <canvas id="weeklyTotals"></canvas>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script
+    src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script>
+    const ctx = document.getElementById('weeklyTotals');
+
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: {{ labels | safe }},
+        datasets: [{
+            label: "Weekly points"
+            data: {{ data }},
+        fill: false
+        }]
+        },
+        options: {
+        responsive: false
+    }
+    });
+</script>
 {% endblock %}

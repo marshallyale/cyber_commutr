@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field, InitVar
 from typing import Optional
 import string
+import time
 from datetime import datetime
 import secrets
 import requests
@@ -11,6 +12,7 @@ from argon2.exceptions import (
     InvalidHashError,
 )
 from flask_login import UserMixin
+from pymongo import UpdateOne
 from app.db_queries.mongo_queries import weekly_aggregator
 from app import db_client, login
 
@@ -163,6 +165,7 @@ class User(UserMixin):
         current_timestamp = int(current_datetime.timestamp())
         # If the timestamp is within a minute of
         if current_timestamp - 60 >= self.access_token_exp:
+            print("Refreshing access token")
             success = self.refresh_access_token()
             if success:
                 return True
@@ -178,10 +181,79 @@ class User(UserMixin):
         url = profile_data.get("profile")
         return url
 
-    def get_user_commute_totals(self):
+    def get_user_commute_totals(self, units="miles"):
         pipeline = weekly_aggregator(self.strava_id)
-        result = db_client.db.activities.aggregate(pipeline)
-        return result
+        results = db_client.db.activities.aggregate(pipeline)
+        results = list(results)
+        dates = []
+        totals = []
+        if units == "miles":
+            scaling = 1609.34
+        else:
+            scaling = 1000
+        for result in results:
+            date_time = datetime.strptime(result["year_week"] + "-1", "%G-%V-%u")
+            dates.append(datetime.strftime(date_time, "%Y-%m-%d"))
+            totals.append(round(result["total"] / scaling, 2))
+        return dates, totals
+
+    def insert_activities_to_mongo(self, activities):
+        """Takes a list of activities from Strava and inserts them to Mongo using Bulk Write operation
+
+        Args:
+            activities (list(dict)): List of dictionary objects for strava activities
+
+        Returns:
+            bool: True if no writeErrors, False otherwise
+        """
+        operations = []
+        for activity in activities:
+            operation = UpdateOne(
+                {"id": activity.get("id")}, {"$setOnInsert": activity}, upsert=True
+            )
+            operations.append(operation)
+        result = db_client.db.activities.bulk_write(operations)
+        # print(result.bulk_api_result)
+        if not result.bulk_api_result.get("writeErrors"):
+            return True
+        return False
+
+    def fetch_previous_events(
+        self, before=None, after=None, activities_to_fetch=50, retries=5
+    ):
+        """Fetches athletes previous activities
+
+        Args:
+            before (int, optional): Epoch timestamp to filter activities before a certain time. Defaults to None.
+            after (int, optional): Epoch timestamp to filter activities after a certain time. Defaults to None.
+            activities_to_fetch (int, optional): Number of activities to fetch. Defaults to 50.
+            retries (int, optional): Number of retries to try. Defaults to 5.
+        """
+        self.check_access_token()
+        url = "https://www.strava.com/api/v3/athlete/activities"
+        batch_size = activities_to_fetch if activities_to_fetch <= 50 else 50
+        headers = {"Authorization": f"Bearer {self.access_token}"}
+        params = {"before": before, "after": after, "per_page": batch_size}
+        activities = [0] * batch_size
+        batch_num = 0
+        time_sleep = 1
+        while len(activities) == batch_size:
+            batch_num += 1
+            for retry in range(retries):
+                activities = self._request(
+                    url, method="GET", params=params, headers=headers
+                )
+                if activities:
+                    success = self.insert_activities_to_mongo(activities)
+                    if success:
+                        break
+                print(
+                    f"Failed to get activities from Mongo. Retry: {retry + 1}, Max retries: {retries}"
+                )
+                time.sleep(time_sleep * (retry + 1))
+            if activities_to_fetch <= batch_size * batch_num:
+                # If we have fetched the requested number of activites, then break
+                break
 
     def _request(self, url, method="GET", payload=None, params=None, headers=None):
         try:

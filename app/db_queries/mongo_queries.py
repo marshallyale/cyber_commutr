@@ -15,13 +15,25 @@ def weekly_aggregator(strava_id):
         {
             "$group": {
                 "_id": {
-                    "week": {"$week": "$date_field"},
-                    "month": {"$month": "$date_field"},
-                    "year": {"$year": "$date_field"},
+                    "week": {"$isoWeek": "$date_field"},
+                    "year": {"$isoWeekYear": "$date_field"},
                 },
                 "total": {"$sum": "$distance"},
             }
         },
-        {"$sort": {"_id.year": -1, "_id.month": -1, "_id.week": -1}},
+        {"$sort": {"_id.year": -1, "_id.week": -1}},
+        {
+            "$project": {
+                "_id": 0,
+                "total": 1,
+                "year_week": {
+                    "$concat": [
+                        {"$toString": "$_id.year"},
+                        "-",
+                        {"$toString": "$_id.week"},
+                    ]
+                },
+            }
+        },
     ]
     return pipeline
