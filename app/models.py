@@ -2,7 +2,7 @@ from dataclasses import dataclass, field, InitVar
 from typing import Optional
 import string
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import secrets
 import requests
 from flask import current_app
@@ -181,21 +181,30 @@ class User(UserMixin):
         url = profile_data.get("profile")
         return url
 
-    def get_user_commute_totals(self, units="miles"):
-        pipeline = weekly_aggregator(self.strava_id)
+    def get_user_commute_totals(self, weeks=10, units="miles"):
+        total_map = self.get_last_n_weeks(weeks)
+        final_date = list(total_map.keys())[-1]
+        pipeline = weekly_aggregator(self.strava_id, last_date=final_date[-1])
         results = db_client.db.activities.aggregate(pipeline)
         results = list(results)
-        dates = []
-        totals = []
         if units == "miles":
             scaling = 1609.34
         else:
             scaling = 1000
         for result in results:
-            date_time = datetime.strptime(result["year_week"] + "-1", "%G-%V-%u")
-            dates.append(datetime.strftime(date_time, "%Y-%m-%d"))
-            totals.append(round(result["total"] / scaling, 2))
-        return dates, totals
+            date_obj = datetime.strptime(result["year_week"] + "-1", "%G-%V-%u")
+            date_time = datetime.strftime(date_obj, "%Y-%m-%d")
+            total_map[date_time] = round(result["total"] / scaling, 2)
+        return total_map
+    
+    def get_last_n_weeks(self, weeks):
+        current_date = datetime.now()
+        week_map = {}
+        for i in range(weeks):
+            # Generates the start date (monday) of the last n weeks
+            start_date = datetime.strftime(current_date - timedelta(days=current_date.weekday(), weeks=i), "%Y-%m-%d")
+            week_map[start_date] = 0
+        return week_map
 
     def insert_activities_to_mongo(self, activities):
         """Takes a list of activities from Strava and inserts them to Mongo using Bulk Write operation
@@ -219,7 +228,7 @@ class User(UserMixin):
         return False
 
     def fetch_previous_events(
-        self, before=None, after=None, activities_to_fetch=50, retries=5
+        self, before=None, after=None, activities_to_fetch=50, retries=5, weeks=10
     ):
         """Fetches athletes previous activities
 
@@ -233,13 +242,15 @@ class User(UserMixin):
         url = "https://www.strava.com/api/v3/athlete/activities"
         batch_size = activities_to_fetch if activities_to_fetch <= 50 else 50
         headers = {"Authorization": f"Bearer {self.access_token}"}
-        params = {"before": before, "after": after, "per_page": batch_size}
+        params = {"page": 0, "before": before, "after": after, "per_page": batch_size}
         activities = [0] * batch_size
         batch_num = 0
         time_sleep = 1
         while len(activities) == batch_size:
             batch_num += 1
+            params["page"] += 1
             for retry in range(retries):
+                print(f"Fetching num {batch_num*batch_size}, total: {activities_to_fetch}")
                 activities = self._request(
                     url, method="GET", params=params, headers=headers
                 )
@@ -248,12 +259,15 @@ class User(UserMixin):
                     if success:
                         break
                 print(
-                    f"Failed to get activities from Mongo. Retry: {retry + 1}, Max retries: {retries}"
+                    f"Failed to fetch activities. Retry: {retry + 1}, Max retries: {retries}"
                 )
                 time.sleep(time_sleep * (retry + 1))
             if activities_to_fetch <= batch_size * batch_num:
                 # If we have fetched the requested number of activites, then break
                 break
+
+    def create_weekly_total_map(self, weeks=10):
+        pass
 
     def _request(self, url, method="GET", payload=None, params=None, headers=None):
         try:

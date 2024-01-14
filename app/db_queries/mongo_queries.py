@@ -1,6 +1,14 @@
-def weekly_aggregator(strava_id):
+def weekly_aggregator(strava_id, last_date):
     pipeline = [
-        {"$match": {"athlete.id": strava_id}},
+        {"$match": {"athlete.id": strava_id}}, 
+        {"$match": {"$dateFromString": {
+                    "dateString": "$start_date"
+                }, {
+            "$gt": {last_date
+                
+            }
+        }
+    }},
         {
             "$project": {
                 "_id": 1,
